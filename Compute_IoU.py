@@ -13,9 +13,12 @@ import keras.losses
 from tensorflow import keras
 # from keras import load_model
 
+#Declare preprocessing functions, both 2d and 3d
 preprocess_input_2D = sm2.get_preprocessing('vgg16')
 preprocess_inplut_3D = sm3.get_preprocessing('vgg16')
 
+
+#Import both models, define custom objects
 model_2d = keras.models.load_model('models/2D_model_vgg16_100epochs.h5',custom_objects={"dice_loss_plus_1focal_loss":sm2.losses.DiceLoss(class_weights=np.array([0.25, 0.25, 0.25, 0.25])),
                                                                                         "iou_score":sm2.metrics.IOUScore(threshold=.5),
                                                                                         "f1-score":sm2.losses.CategoricalFocalLoss()})
@@ -23,18 +26,18 @@ model_3d = keras.models.load_model('models/3D_model_vgg16_100epochs.h5',custom_o
                                                                                         "iou_score":sm3.metrics.IOUScore(threshold=.5),
                                                                                         "f1-score":sm3.losses.CategoricalFocalLoss()})
 
+#Grab entired training block, and mask for IoU computation later
 images_training_block = io.imread('sandstone_data_for_ML/data_for_3D_Unet/train_images_256_256_256.tif')
 masks_training_block = io.imread('sandstone_data_for_ML/data_for_3D_Unet/train_masks_256_256_256.tif')
 
+#Patchify both images, one in 2d, one in 3d
 image_patches_3D = patchify(images_training_block, (64,64,64), step=64)
 image_patches_2D = patchify(images_training_block, (1,256,256), step=1)
-
-# mask_patches_3D = patchify(masks_training_block,(64,64,64),step=64)
-# mask_patches_2D = patchify(masks_training_block,(256,1,256),step=1)
 
 shape_3D = image_patches_3D.shape
 shape_2D = image_patches_2D.shape
 
+#Run the 3d model on all the 64x64x64 patches
 predicted_patches_3D = []
 for i in range(shape_3D[0]):
     for j in range(shape_3D[1]):
@@ -47,10 +50,12 @@ for i in range(shape_3D[0]):
             single_patch_prediction_argmax = np.argmax(single_patch_prediction, axis=4)[0,:,:,:]
             predicted_patches_3D.append(single_patch_prediction_argmax)
 
+#Convert the predictions back into the original 256x256x256 shape
 predicted_patches_3D = np.array(predicted_patches_3D)
 predicted_patches_3D_reshaped = np.reshape(predicted_patches_3D,image_patches_3D.shape)
 reconstructed_image_3D = unpatchify(predicted_patches_3D_reshaped,images_training_block.shape)
 
+#Run the 2d model on all the 256x256 images
 predicted_patches_2D = []
 for i in range(shape_2D[0]):
     single_patch = image_patches_2D[i,0,0,0,:,:]
@@ -60,16 +65,16 @@ for i in range(shape_2D[0]):
     single_patch_prediction_argmax = np.argmax(single_patch_prediction,axis = 3)[0,:,:]
     predicted_patches_2D.append(single_patch_prediction_argmax)
 
+#Convert the predictions back into the 256x256x256 shape
 predicted_patches_2D = np.array(predicted_patches_2D)
 predicted_patches_2D_reshaped = np.reshape(predicted_patches_3D,image_patches_2D.shape)
 reconstructed_image_2D = unpatchify(predicted_patches_2D_reshaped,images_training_block.shape)
 
-# print(reconstructed_image_2D.shape)#(256,256,256)
-# print(reconstructed_image_3D.shape)#(256,256,256)
-# print(masks_training_block.shape)#(256,256,256)
-# print(np.min(masks_training_block))
-# print(np.max(masks_training_block))
-
+#We define the union as (true_positives + false_positives + false_negatives).
+#This is equal to (correct predictions + incorrect predictions) given the way
+#we define these labels
+#We then define the intersection as the true true_positives, then place these
+#values over each other to compute the final IoU score.
 union = 0
 intersection_2D = 0
 intersection_3D = 0
